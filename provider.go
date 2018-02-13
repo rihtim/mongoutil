@@ -10,6 +10,8 @@ import (
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 	"github.com/rihtim/core/utils"
+	"github.com/Sirupsen/logrus"
+	"github.com/rihtim/core/log"
 )
 
 type DataProvider struct {
@@ -49,11 +51,14 @@ func (ma *DataProvider) Connect() (err *utils.Error) {
 	if dialErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Database connection failed. Reason: " + dialErr.Error(),
+			Message: "Database connection failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason": dialErr.Error(),
+		}).Error("Mongo Error: Connection failed.")
 		return
 	}
-
 	return
 }
 
@@ -61,6 +66,8 @@ func (ma DataProvider) Create(collection string, data map[string]interface{}) (r
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	createdAt := float64(time.Now().Unix())
@@ -71,12 +78,21 @@ func (ma DataProvider) Create(collection string, data map[string]interface{}) (r
 	data[CreatedAt] = createdAt
 	data[UpdatedAt] = createdAt
 
-	insertError := connection.Insert(data)
+	insertError := retry(5, func() (err error) {
+		return connection.Insert(data)
+	})
+
 	if insertError != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Inserting item to database failed: " + insertError.Error(),
+			Message: insertError.Error(),
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason":     insertError.Error(),
+			"collection": collection,
+			"data":       data,
+		}).Error("Mongo Error: Inserting item failed.")
 		return
 	}
 
@@ -92,17 +108,27 @@ func (ma DataProvider) Get(collection string, id string) (response map[string]in
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(300 * time.Millisecond)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	response = make(map[string]interface{})
 
-	getErr := connection.FindId(id).One(&response)
+	getErr := retry(5, func() (err error) {
+		return connection.FindId(id).One(&response)
+	})
+
 	if getErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusNotFound,
-			Message: "Object from '" + collection + "' with id '" + id + "' not found.",
+			Message: "Getting '" + collection + "' with id '" + id + "' failed.",
 		}
 		response = nil
+
+		log.WithFields(logrus.Fields{
+			"reason":     getErr.Error(),
+			"collection": collection,
+		}).Error("Mongo Error: Getting item failed.")
 		return
 	}
 	return
@@ -112,6 +138,8 @@ func (ma DataProvider) Query(collection string, parameters map[string][]string) 
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	response = make(map[string]interface{})
@@ -121,6 +149,8 @@ func (ma DataProvider) Query(collection string, parameters map[string][]string) 
 			Code:    http.StatusBadRequest,
 			Message: "Where and aggregate parameters cannot be used at the same request.",
 		}
+
+		log.Error("Mongo Error: Where and aggregate parameters cannot be used at the same request.")
 		return
 	}
 
@@ -161,20 +191,30 @@ func (ma DataProvider) Query(collection string, parameters map[string][]string) 
 	}
 
 	if hasAggregateParam {
-		getErr = connection.Pipe(aggregateParam).All(&results)
+		getErr = retry(5, func() (err error) {
+			return connection.Pipe(aggregateParam).All(&results)
+		})
 	} else {
 		query := connection.Find(whereParam).Skip(skipParam).Limit(limitParam)
 		if hasSortParam {
 			query = query.Sort(sortParam)
 		}
-		getErr = query.All(&results)
+		getErr = retry(5, func() (err error) {
+			return query.All(&results)
+		})
 	}
 
 	if getErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Getting items failed. Reason: " + getErr.Error(),
+			Message: "Querying items from database failed. Reason: " + getErr.Error(),
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason":     getErr.Error(),
+			"collection": collection,
+			"parameters": parameters,
+		}).Error("Mongo Error: Querying items failed.")
 		return
 	}
 
@@ -190,6 +230,8 @@ func (ma DataProvider) Update(collection string, id string, data map[string]inte
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	if data == nil {
@@ -197,6 +239,8 @@ func (ma DataProvider) Update(collection string, id string, data map[string]inte
 			Code:    http.StatusBadRequest,
 			Message: "Request body cannot be empty for update requests.",
 		}
+
+		log.Error("Mongo Error: Request body cannot be empty for update requests.")
 		return
 	}
 
@@ -221,8 +265,14 @@ func (ma DataProvider) Update(collection string, id string, data map[string]inte
 	if updateErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Update request to db failed.",
+			Message: "Updating '" + collection + "' with id '" + id + "' failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason":     updateErr.Error(),
+			"collection": collection,
+			"id":         id,
+		}).Error("Mongo Error: Updating item failed.")
 		return
 	}
 
@@ -236,14 +286,22 @@ func (ma DataProvider) Delete(collection string, id string) (response map[string
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	removeErr := connection.RemoveId(id)
 	if removeErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusNotFound,
-			Message: "Deleting item failed. Reason: " + removeErr.Error(),
+			Message: "Updating '" + collection + "' with id '" + id + "' failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason":     removeErr.Error(),
+			"collection": collection,
+			"id":         id,
+		}).Error("Mongo Error: Updating item failed.")
 	}
 	return
 }
@@ -255,11 +313,15 @@ func (ma DataProvider) CreateFile(data io.ReadCloser) (response map[string]inter
 			Code:    http.StatusBadRequest,
 			Message: "Request body cannot be empty for create file requests.",
 		}
+
+		log.Error("Mongo Error: Request body cannot be empty for create file requests.")
 		return
 	}
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 
 	objectId := bson.NewObjectId()
 	now := time.Now()
@@ -269,8 +331,12 @@ func (ma DataProvider) CreateFile(data io.ReadCloser) (response map[string]inter
 	if mongoErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Creating file failed. Reason: " + mongoErr.Error(),
+			Message: "Creating file failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason": mongoErr.Error(),
+		}).Error("Creating file failed.")
 		return
 	}
 	gridFile.SetId(fileName)
@@ -282,8 +348,12 @@ func (ma DataProvider) CreateFile(data io.ReadCloser) (response map[string]inter
 	if copyErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Writing file failed. Reason: " + copyErr.Error(),
+			Message: "Writing file failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason": copyErr.Error(),
+		}).Error("Mongo Error: Writing file failed.")
 		return
 	}
 
@@ -291,8 +361,12 @@ func (ma DataProvider) CreateFile(data io.ReadCloser) (response map[string]inter
 	if closeErr != nil {
 		err = &utils.Error{
 			Code:    http.StatusInternalServerError,
-			Message: "Closing file failed. Reason: " + closeErr.Error(),
+			Message: "Closing file failed.",
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason": closeErr.Error(),
+		}).Error("Mongo Error: Closing file failed.")
 		return
 	}
 
@@ -307,19 +381,29 @@ func (ma DataProvider) GetFile(id string) (response []byte, err *utils.Error) {
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
+	sessionCopy.SetSyncTimeout(1 * time.Second)
+	sessionCopy.SetSocketTimeout(1 * time.Second)
 
 	file, mongoErr := sessionCopy.DB(ma.Database).GridFS("fs").OpenId(id)
 	if mongoErr != nil {
 		if mongoErr == mgo.ErrNotFound {
 			err = &utils.Error{
 				Code:    http.StatusNotFound,
-				Message: "File not found. Reason: " + mongoErr.Error(),
+				Message: "File not found.",
 			}
+
+			log.WithFields(logrus.Fields{
+				"reason": mongoErr.Error(),
+			}).Error("Mongo Error: File not found.")
 		} else {
 			err = &utils.Error{
 				Code:    http.StatusInternalServerError,
-				Message: "Getting file failed. Reason: " + mongoErr.Error(),
+				Message: "Getting file failed.",
 			}
+
+			log.WithFields(logrus.Fields{
+				"reason": mongoErr.Error(),
+			}).Error("Mongo Error: Getting file failed.")
 		}
 		return
 	}
@@ -331,6 +415,10 @@ func (ma DataProvider) GetFile(id string) (response []byte, err *utils.Error) {
 			Code:    http.StatusInternalServerError,
 			Message: "Printing file failed. Reason: " + printErr.Error(),
 		}
+
+		log.WithFields(logrus.Fields{
+			"reason": printErr.Error(),
+		}).Error("Mongo Error: Printing file failed.")
 	}
 	file.Close()
 	return
@@ -409,4 +497,29 @@ var extractIntParameter = func(parameters map[string][]string, key string) (valu
 		value = int(paramValue.(float64))
 	}
 	return
+}
+
+func retry(attempts int, function func() error) (err error) {
+	for i := 0; ; i++ {
+		err = function()
+		if err == nil {
+			return
+		}
+
+		if i >= (attempts - 1) {
+			break
+		}
+
+		log.WithFields(logrus.Fields{
+			"reason":  err.Error(),
+			"attempt": i + 1,
+		}).Error("Mongo Error: Attempt failed. Retrying.")
+	}
+
+	log.WithFields(logrus.Fields{
+		"reason":  err.Error(),
+		"attempt": attempts,
+	}).Error("Mongo Error: Last attempt failed. Not retrying.")
+
+	return err
 }
