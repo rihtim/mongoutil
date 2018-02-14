@@ -119,15 +119,23 @@ func (ma DataProvider) Get(collection string, id string) (response map[string]in
 	})
 
 	if getErr != nil {
-		err = &utils.Error{
-			Code:    http.StatusNotFound,
-			Message: "Getting '" + collection + "' with id '" + id + "' failed.",
+		if getErr == mgo.ErrNotFound {
+			err = &utils.Error{
+				Code:    http.StatusNotFound,
+				Message: "'" + collection + "' with id '" + id + "' not found.",
+			}
+		} else {
+			err = &utils.Error{
+				Code:    http.StatusInternalServerError,
+				Message: "Getting '" + collection + "' with id '" + id + "' failed.",
+			}
 		}
-		response = nil
 
+		response = nil
 		log.WithFields(logrus.Fields{
 			"reason":     getErr.Error(),
 			"collection": collection,
+			"id":         id,
 		}).Error("Mongo Error: Getting item failed.")
 		return
 	}
@@ -502,10 +510,18 @@ var extractIntParameter = func(parameters map[string][]string, key string) (valu
 func retry(attempts int, function func() error) (err error) {
 	for i := 0; ; i++ {
 		err = function()
+
+		// finish if the function suceeded
 		if err == nil {
 			return
 		}
 
+		// no need to retry if the error is 'not found' error
+		if err == mgo.ErrNotFound {
+			return
+		}
+
+		// break if the last attempt failed too
 		if i >= (attempts - 1) {
 			break
 		}
