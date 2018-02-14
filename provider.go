@@ -402,6 +402,7 @@ func (ma DataProvider) GetFile(id string) (response []byte, err *utils.Error) {
 
 			log.WithFields(logrus.Fields{
 				"reason": mongoErr.Error(),
+				"id":     id,
 			}).Error("Mongo Error: File not found.")
 		} else {
 			err = &utils.Error{
@@ -411,6 +412,7 @@ func (ma DataProvider) GetFile(id string) (response []byte, err *utils.Error) {
 
 			log.WithFields(logrus.Fields{
 				"reason": mongoErr.Error(),
+				"id":     id,
 			}).Error("Mongo Error: Getting file failed.")
 		}
 		return
@@ -426,6 +428,7 @@ func (ma DataProvider) GetFile(id string) (response []byte, err *utils.Error) {
 
 		log.WithFields(logrus.Fields{
 			"reason": printErr.Error(),
+			"id":     id,
 		}).Error("Mongo Error: Printing file failed.")
 	}
 	file.Close()
