@@ -71,7 +71,7 @@ func (ma DataProvider) Create(collection string, data map[string]interface{}) (r
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	createdAt := float64(time.Now().Unix())
-	if _, hasId := data[ID]; !hasId {
+	if id, hasId := data[ID]; !hasId || id == "" {
 		id := bson.NewObjectId()
 		data[ID] = id.Hex()
 	}
