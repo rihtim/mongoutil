@@ -146,8 +146,8 @@ func (ma DataProvider) Query(collection string, parameters map[string][]string) 
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
-	sessionCopy.SetSyncTimeout(10 * time.Second)
-	sessionCopy.SetSocketTimeout(10 * time.Second)
+	sessionCopy.SetSyncTimeout(30 * time.Second)
+	sessionCopy.SetSocketTimeout(30 * time.Second)
 	connection := sessionCopy.DB(ma.Database).C(collection)
 
 	response = make(map[string]interface{})
