@@ -200,7 +200,7 @@ func (ma DataProvider) Query(collection string, parameters map[string][]string) 
 
 	if hasAggregateParam {
 		getErr = retry(5, func() (err error) {
-			return connection.Pipe(aggregateParam).All(&results)
+			return connection.Pipe(aggregateParam).AllowDiskUse().All(&results)
 		})
 	} else {
 		query := connection.Find(whereParam).Skip(skipParam).Limit(limitParam)
