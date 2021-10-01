@@ -1,17 +1,18 @@
 package mongoutil
 
 import (
-	"io"
-	"time"
-	"reflect"
-	"net/http"
-	"encoding/json"
 	"encoding/base64"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+	"encoding/json"
+	"fmt"
+	"github.com/rihtim/core/log"
 	"github.com/rihtim/core/utils"
 	"github.com/sirupsen/logrus"
-	"github.com/rihtim/core/log"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
+	"io"
+	"net/http"
+	"reflect"
+	"time"
 )
 
 type DataProvider struct {
@@ -20,6 +21,7 @@ type DataProvider struct {
 	AuthDatabase string
 	Username     string
 	Password     string
+	Collections  map[string]bool
 
 	session  *mgo.Session
 	dialInfo mgo.DialInfo
@@ -63,6 +65,18 @@ func (ma *DataProvider) Connect() (err *utils.Error) {
 }
 
 func (ma DataProvider) Create(collection string, data map[string]interface{}) (response map[string]interface{}, err *utils.Error) {
+
+	if ma.Collections != nil {
+		allowed, hasCollection := ma.Collections[collection]
+		fmt.Println(collection, allowed, hasCollection)
+		if !allowed || !hasCollection {
+			err = &utils.Error{
+				Code:    http.StatusBadRequest,
+				Message: "bad-request-c",
+			}
+			return
+		}
+	}
 
 	sessionCopy := ma.session.Copy()
 	defer sessionCopy.Close()
