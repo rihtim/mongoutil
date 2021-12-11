@@ -3,7 +3,6 @@ package mongoutil
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"github.com/rihtim/core/log"
 	"github.com/rihtim/core/utils"
 	"github.com/sirupsen/logrus"
@@ -68,7 +67,6 @@ func (ma DataProvider) Create(collection string, data map[string]interface{}) (r
 
 	if ma.Collections != nil {
 		allowed, hasCollection := ma.Collections[collection]
-		fmt.Println(collection, allowed, hasCollection)
 		if !allowed || !hasCollection {
 			err = &utils.Error{
 				Code:    http.StatusBadRequest,
